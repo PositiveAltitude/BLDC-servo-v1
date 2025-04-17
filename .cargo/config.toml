@@ -1,0 +1,7 @@
+[build]
+target = "thumbv7em-none-eabihf"
+
+# use the Tlink.x scrip from the cortex-m-rt crate
+#rustflags = ["-C", "link-arg=-Tlink.x", "-g"]
+rustflags = ["-C", "link-arg=-Tlink.x", "-g"]
+#rustflags = ["-C", "linker=arm-none-eabi-ld"]
