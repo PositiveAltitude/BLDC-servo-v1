@@ -19,14 +19,14 @@ extern crate alloc;
 extern crate panic_semihosting;
 
 use cortex_m_rt::entry;
-use stm32g4xx_hal::can::CanExt;
+use stm32g4xx_hal::can::{Can, CanExt};
 use stm32g4xx_hal::rcc::PllMDiv::{DIV_4, DIV_8};
 use stm32g4xx_hal::rcc::PllNMul::MUL_75;
 use stm32g4xx_hal::rcc::PllRDiv::DIV_2;
 use stm32g4xx_hal::rcc::PllSrc::HSI;
 use stm32g4xx_hal::rcc::{Config, FdCanClockSource, PllConfig, PllPDiv, Rcc, SysClockSrc};
 
-use crate::can_api::{ApiEncodeDecode, AqueductResponseFrame};
+use crate::can_api::*;
 use fdcan::config::{DataBitTiming, NominalBitTiming};
 use fdcan::filter::{StandardFilter, StandardFilterSlot};
 use fdcan::frame::{FrameFormat, RxFrameInfo, TxFrameHeader};
@@ -42,15 +42,17 @@ use stm32g4xx_hal::dma::TransferExt;
 use stm32g4xx_hal::signature::VrefCal;
 // use stm32g4xx_hal::gpio::Speed;
 use embedded_alloc::LlffHeap as Heap;
-use fdcan::ReceiveOverrun;
+use fdcan::{FdCan, NormalOperationMode, ReceiveOverrun};
 use hal::pwm::PwmAdvExt;
 use stm32g4xx_hal::comparator::{self, ComparatorExt, ComparatorSplit};
 use stm32g4xx_hal::dac::{Dac1IntSig1, Dac1IntSig2, Dac2IntSig1, DacExt, DacOut};
 
-use crate::dpwmmin_table::ASSINUS_TABLE;
+use crate::dpwmmin_table::DPWMMIN_TABLE;
 use num_traits::real::Real;
+use num_traits::ToPrimitive;
 use stm32g4xx_hal::adc::config::ExternalTrigger12::{Tim_1_cc_1, Tim_1_trgo};
 use stm32g4xx_hal::gpio::Speed;
+use stm32g4xx_hal::pac::FDCAN1;
 use stm32g4xx_hal::pwm::Polarity;
 use stm32g4xx_hal::pwr::{PowerConfiguration, PwrExt};
 use stm32g4xx_hal::rcc::PllPDiv::DIV_9;
@@ -98,11 +100,11 @@ fn main() -> ! {
     let gpioa = dp.GPIOA.split(&mut rcc);
     let gpiob = dp.GPIOB.split(&mut rcc);
     let gpioc = dp.GPIOC.split(&mut rcc);
-    let mut led = gpioc.pc6.into_push_pull_output();
+    let gpiof = dp.GPIOF.split(&mut rcc);
 
     let mut can = {
         let rx = gpioa.pa11.into_alternate::<9u8>(); //.set_speed(Speed::VeryHigh);
-        let tx = gpiob.pb9.into_alternate::<9u8>(); //.set_speed(Speed::VeryHigh);
+        let tx = gpioa.pa12.into_alternate::<9u8>(); //.set_speed(Speed::VeryHigh);
 
         let mut can = dp.FDCAN1.fdcan(tx, rx, &rcc);
 
@@ -129,61 +131,61 @@ fn main() -> ! {
     let pin_out2 = gpioa.pa9.into_alternate::<6u8>();
     let pin_out3 = gpioa.pa10.into_alternate::<6u8>();
 
-    let pin_out1n = gpioc.pc13.into_alternate::<4u8>();
-    let pin_out2n = gpioa.pa12.into_alternate::<6u8>();
-    let pin_out3n = gpiob.pb15.into_alternate::<4u8>();
+    let pin_out1n = gpioa.pa7.into_alternate::<6u8>();
+    let pin_out2n = gpiob.pb0.into_alternate::<6u8>();
+    let pin_out3n = gpiof.pf0.into_alternate::<6u8>();
 
-    let shunt1_voltage_p = gpioa.pa1.into_analog();
-    let shunt1_voltage_n = gpioa.pa3.into_analog();
-    let shunt1_voltage_out = gpioa.pa2.into_analog();
+    // let shunt1_voltage_p = gpioa.pa1.into_analog();
+    // let shunt1_voltage_n = gpioa.pa3.into_analog();
+    // let shunt1_voltage_out = gpioa.pa2.into_analog();
+    // 
+    // let shunt2_voltage_out = gpioa.pa6;
+    // 
+    // let shunt3_voltage_p = gpiob.pb0.into_analog();
+    // let shunt3_voltage_n = gpiob.pb2.into_analog();
+    // let shunt3_voltage_out = gpiob.pb1.into_analog();
 
-    let shunt2_voltage_out = gpioa.pa6;
+    // dp.OPAMP.opamp1_csr.write(|w| {
+    //     w.vp_sel()
+    //         .vinp0()
+    //         .vm_sel()
+    //         .pga()
+    //         .pga_gain()
+    //         .gain16_input_vinm0()
+    //         .opaintoen()
+    //         .output_pin()
+    //         .opaen()
+    //         .enabled()
+    // });
 
-    let shunt3_voltage_p = gpiob.pb0.into_analog();
-    let shunt3_voltage_n = gpiob.pb2.into_analog();
-    let shunt3_voltage_out = gpiob.pb1.into_analog();
+    // dp.OPAMP.opamp3_csr.write(|w| {
+    //     w.vp_sel()
+    //         .vinp0()
+    //         .vm_sel()
+    //         .pga()
+    //         .pga_gain()
+    //         .gain16_input_vinm0()
+    //         .opaintoen()
+    //         .output_pin()
+    //         .opaen()
+    //         .enabled()
+    // });
 
-    dp.OPAMP.opamp1_csr.write(|w| {
-        w.vp_sel()
-            .vinp0()
-            .vm_sel()
-            .pga()
-            .pga_gain()
-            .gain16_input_vinm0()
-            .opaintoen()
-            .output_pin()
-            .opaen()
-            .enabled()
-    });
+    // let dac1 = dp.DAC1.constrain((gpioa.pa4, Dac1IntSig1), &mut rcc);
+    // let mut dac1 = dac1.enable();
 
-    dp.OPAMP.opamp3_csr.write(|w| {
-        w.vp_sel()
-            .vinp0()
-            .vm_sel()
-            .pga()
-            .pga_gain()
-            .gain16_input_vinm0()
-            .opaintoen()
-            .output_pin()
-            .opaen()
-            .enabled()
-    });
+    // dac1.set_value(850);
 
-    let dac1 = dp.DAC1.constrain((gpioa.pa4, Dac1IntSig1), &mut rcc);
-    let mut dac1 = dac1.enable();
+    // let (comp1, comp2, comp3, comp4, ..) = dp.COMP.split(&mut rcc);
 
-    dac1.set_value(850);
-
-    let (comp1, comp2, comp3, comp4, ..) = dp.COMP.split(&mut rcc);
-
-    let comp1 = comp1
-        .comparator(
-            &shunt1_voltage_p,
-            &dac1,
-            comparator::Config::default().hysteresis(comparator::Hysteresis::None),
-            &rcc.clocks,
-        )
-        .enable();
+    // let comp1 = comp1
+    //     .comparator(
+    //         &shunt1_voltage_p,
+    //         &dac1,
+    //         comparator::Config::default().hysteresis(comparator::Hysteresis::None),
+    //         &rcc.clocks,
+    //     )
+    //     .enable();
 
     // let comp2 = comp2.comparator(
     //     &shunt2_voltage_p,
@@ -192,14 +194,14 @@ fn main() -> ! {
     //     &rcc.clocks,
     // );
 
-    let comp4 = comp4
-        .comparator(
-            &shunt3_voltage_p,
-            &dac1,
-            comparator::Config::default().hysteresis(comparator::Hysteresis::None),
-            &rcc.clocks,
-        )
-        .enable();
+    // let comp4 = comp4
+    //     .comparator(
+    //         &shunt3_voltage_p,
+    //         &dac1,
+    //         comparator::Config::default().hysteresis(comparator::Hysteresis::None),
+    //         &rcc.clocks,
+    //     )
+    //     .enable();
 
     let pins = (pin_out1, pin_out2, pin_out3);
 
@@ -208,7 +210,7 @@ fn main() -> ! {
         .pwm_advanced(pins, &mut rcc)
         .frequency(50.kHz())
         .center_aligned()
-        .with_deadtime(200.nanos())
+        .with_deadtime(100.nanos())
         .finalize();
 
     let tim1_hack = unsafe { &*stm32::TIM1::ptr() };
@@ -255,50 +257,50 @@ fn main() -> ! {
         .circular_buffer(true)
         .memory_increment(true);
 
-    let mut adc = dp
-        .ADC1
-        .claim(ClockSource::SystemClock, &rcc, &mut delay, true);
+    // let mut adc = dp
+    //     .ADC1
+    //     .claim(ClockSource::SystemClock, &rcc, &mut delay, true);
 
-    adc.enable_vref(&dp.ADC12_COMMON);
-    adc.set_external_trigger((TriggerMode::FallingEdge, Tim_1_trgo));
-    adc.set_clock_mode(ClockMode::Synchronous_Div_2);
-    adc.set_clock(Clock::Div_2);
-    adc.reset_sequence();
-    adc.configure_channel(&Vref, Sequence::One, SampleTime::Cycles_6_5);
-    adc.configure_channel(&vcc_voltage, Sequence::Two, SampleTime::Cycles_6_5);
-    adc.configure_channel(&shunt1_voltage_p, Sequence::Three, SampleTime::Cycles_6_5);
-    adc.configure_channel(&shunt3_voltage_out, Sequence::Four, SampleTime::Cycles_6_5);
+    // adc.enable_vref(&dp.ADC12_COMMON);
+    // adc.set_external_trigger((TriggerMode::FallingEdge, Tim_1_trgo));
+    // adc.set_clock_mode(ClockMode::Synchronous_Div_2);
+    // adc.set_clock(Clock::Div_2);
+    // adc.reset_sequence();
+    // adc.configure_channel(&Vref, Sequence::One, SampleTime::Cycles_6_5);
+    // adc.configure_channel(&vcc_voltage, Sequence::Two, SampleTime::Cycles_6_5);
+    // adc.configure_channel(&shunt1_voltage_p, Sequence::Three, SampleTime::Cycles_6_5);
+    // adc.configure_channel(&shunt3_voltage_out, Sequence::Four, SampleTime::Cycles_6_5);
 
-    let first_buffer = cortex_m::singleton!(: [u16; 100] = [0; 100]).unwrap();
-    let mut transfer = streams.0.into_circ_peripheral_to_memory_transfer(
-        adc.enable_dma(Dma::Continuous),
-        &mut first_buffer[..],
-        config,
-    );
+    // let first_buffer = cortex_m::singleton!(: [u16; 100] = [0; 100]).unwrap();
+    // let mut transfer = streams.0.into_circ_peripheral_to_memory_transfer(
+    //     adc.enable_dma(Dma::Continuous),
+    //     &mut first_buffer[..],
+    //     config,
+    // );
 
-    transfer.start(|adc| adc.start_conversion());
+    // transfer.start(|adc| adc.start_conversion());
 
     //enable update trigger
-    unsafe { tim1_hack.cr2.modify(|r, w| w.mms().bits(0b0111)) }
-
-    let mut vdda = 0u16; // mV
-                         //let mut _ntc_temp = 0f32;
-    let mut vcc = 0u16; // mV
-    let mut current1 = 0i32; // mA
-    let mut current3 = 0i32;
+    // unsafe { tim1_hack.cr2.modify(|r, w| w.mms().bits(0b0111)) }
+    // 
+    // let mut vdda = 0u16; // mV
+    //                      //let mut _ntc_temp = 0f32;
+    // let mut vcc = 0u16; // mV
+    // let mut current1 = 0i32; // mA
+    // let mut current3 = 0i32;
 
     let mut counter = 0u32;
     let mut flag = false;
 
     let mut phase_orientation = 0u16;
 
-    fn assinus(orientation: u16) -> f32 {
-        if orientation > 4095 {
+    fn dpwmmin(orientation: u16) -> f32 {
+        if orientation > 16383 {
             0_f32
-        } else if orientation < 1366 {
-            ASSINUS_TABLE[orientation as usize]
-        } else if (4096 - orientation) < 1366 {
-            ASSINUS_TABLE[4096_usize - orientation as usize]
+        } else if orientation < 5462 {
+            DPWMMIN_TABLE[orientation as usize]
+        } else if (16384 - orientation) < 5462 {
+            DPWMMIN_TABLE[16384_usize - orientation as usize]
         } else {
             0_f32
         }
@@ -308,7 +310,7 @@ fn main() -> ! {
         if torque > 1_f32 || torque < 0_f32 {
             0_u16
         } else {
-            let mut value: f32 = assinus(orientation);
+            let mut value: f32 = dpwmmin(orientation);
 
             if value != 0_f32 {
                 value = value * 0.25_f32 * torque;
@@ -317,8 +319,6 @@ fn main() -> ! {
             (value * max_pwm as f32) as u16
         }
     }
-
-    led.set_high();
 
     unsafe {
         tim1_hack.ccr4().write(|w| w.ccr().bits(1400));
@@ -332,9 +332,22 @@ fn main() -> ! {
     c3.enable();
 
     let mut can_rx_buffer = [0u8; 8];
+
+    let mut master_address: u16 = 0;
+    let mut slave_address: u16 = 0;
+
+    let mut chip_id1_received = false;
+    let mut chip_id2_received = false;
+
+    let uid_address: *const u8 = 0x1FFF_7590 as *const u8;
+    let uid = unsafe { core::ptr::read_volatile(uid_address as *const [u8; 12]) };
+
+    let chip_id1: [u8; 6] = uid[0..6].try_into().unwrap();
+    let chip_id2: [u8; 6] = uid[6..12].try_into().unwrap();
+
     let encoder_zero = 283u16;
     let poles_pairs = 7u16;
-
+    
     let mut current_orientation = Some(0u16);
     let mut set_point = 0u16;
     let mut last_orientation = 0u16;
@@ -382,132 +395,191 @@ fn main() -> ! {
         }
     };
 
-    loop {
-        if transfer.elements_available() >= 4 {
-            counter += 1;
-
-            if !tim1_hack.bdtr.read().moe().bit() {
-                counter += 10
-            }
-
-            let mut b = [0u16; 4];
-            transfer.read_exact(&mut b);
-
-            match current_orientation {
-                Some(current_orientation) => {
-                    let mut torque = pid(current_orientation, set_point);
-                    let phase_shift_half_pi = 1024;
-                    phase_orientation = (4096 - current_orientation + encoder_zero) * poles_pairs;
-                    if torque >= 0_f32 {
-                        phase_orientation -= phase_shift_half_pi;
-                    } else {
-                        phase_orientation += phase_shift_half_pi;
-                        torque = -torque;
-                    }
-                    phase_orientation = phase_orientation.rem(4096);
-
-
-                    let max_duty = c1.get_max_duty();
-                    let mut phase_orientation2 = phase_orientation + 4096 / 3;
-                    let mut phase_orientation3 = phase_orientation + 8192 / 3;
-                    if phase_orientation2 > 4095 {
-                        phase_orientation2 -= 4096;
-                    }
-                    if phase_orientation3 > 4095 {
-                        phase_orientation3 -= 4096;
-                    }
-                    let pwm1 = phase_pwm(phase_orientation, max_duty, torque);
-                    let pwm2 = phase_pwm(phase_orientation2, max_duty, torque);
-                    let pwm3 = phase_pwm(phase_orientation3, max_duty, torque);
-
-                    c1.set_duty(pwm1);
-                    c2.set_duty(pwm2);
-                    c3.set_duty(pwm3);
+    trait ApiTransmitter {
+        fn can_transmit<T: ApiEncodeDecode>(
+            &mut self,
+            general_channel: bool,
+            slave_address: u16,
+            data: &T,
+        );
+    }
+    impl ApiTransmitter for FdCan<Can<FDCAN1>, NormalOperationMode>
+    {
+        fn can_transmit<T: ApiEncodeDecode>(
+            &mut self,
+            general_channel: bool,
+            slave_address: u16,
+            data: &T,
+        ) {
+            if general_channel || (slave_address > 1 && slave_address < 2048) {
+                let mut address = slave_address;
+                if general_channel {
+                    address = 1
                 }
-                None => {
-                    c1.set_duty(0);
-                    c2.set_duty(0);
-                    c3.set_duty(0);
-                }
-            }
 
-            if counter > 50000 {
-                if flag {
-                    led.set_high()
-                } else {
-                    led.set_low()
-                };
-                flag = !flag;
+                let data_vec = data.api_encode().unwrap();
+                let data = data_vec.as_slice();
 
-                counter = 0;
-
-                vdda = (3000 * VrefCal::get().read() as u32 / b[0] as u32) as u16;
-                vcc = Vref::sample_to_millivolts_ext(
-                    b[1],
-                    vdda as u32 * 187 / 18,
-                    hal::adc::config::Resolution::Twelve,
-                );
-                // current1 = Vref::sample_to_millivolts_ext(
-                //     b[2],
-                //     vdda as u32,
-                //     hal::adc::config::Resolution::Twelve,
-                // ) as i32;
-
-                current1 = b[2] as i32;
-
-                current3 = Vref::sample_to_millivolts_ext(
-                    b[3],
-                    vdda as u32,
-                    hal::adc::config::Resolution::Twelve,
-                ) as i32;
-
-                let divider = 220_i64 * 22_i64 + 220_i64 * 15_i64 + 22_i64 * 15_i64;
-
-                let bias = 22_i64 * (15_i64 * vdda as i64) * 16_i64 / divider;
-
-                // current1 = ((current1 as i64 - bias) * 1000_i64 * divider
-                //     / (3_i64 * 16_i64 * 220_i64 * 22_i64)) as i32;
-                //current3 = (current3 - bias) * (220 * 22) * 1000 / (divider * 3 * 16);
-
-                let data1 = AqueductResponseFrame::ServoState {
-                    vcc,
-                    current1: current1,
-                };
-
-                let v = data1.api_encode().unwrap();
-                let d = v.as_slice();
-
-                let frame_header = TxFrameHeader {
-                    len: v.len() as u8,
+                self.transmit(TxFrameHeader{
+                    len: data.len() as u8,
                     frame_format: FrameFormat::Standard,
-                    id: Standard(StandardId::new(1).unwrap()),
+                    id: Standard{ 0: StandardId::new(address).unwrap() },
                     bit_rate_switching: false,
                     marker: None,
-                };
-                let _ = can.transmit_preserve(frame_header, &d, &mut |_, _, _| {});
-                // unwrap
+                }, data).unwrap();
             }
         }
+    }
+
+    loop {
+        // if transfer.elements_available() >= 4 {
+        //     counter += 1;
+        // 
+        //     if !tim1_hack.bdtr.read().moe().bit() {
+        //         counter += 10
+        //     }
+        // 
+        //     let mut b = [0u16; 4];
+        //     transfer.read_exact(&mut b);
+        // 
+        //     match current_orientation {
+        //         Some(current_orientation) => {
+        //             let mut torque = pid(current_orientation, set_point);
+        //             let phase_shift_half_pi = 1024;
+        //             phase_orientation = (4096 - current_orientation + encoder_zero) * poles_pairs;
+        //             if torque >= 0_f32 {
+        //                 phase_orientation -= phase_shift_half_pi;
+        //             } else {
+        //                 phase_orientation += phase_shift_half_pi;
+        //                 torque = -torque;
+        //             }
+        //             phase_orientation = phase_orientation.rem(4096);
+        // 
+        // 
+        //             let max_duty = c1.get_max_duty();
+        //             let mut phase_orientation2 = phase_orientation + 4096 / 3;
+        //             let mut phase_orientation3 = phase_orientation + 8192 / 3;
+        //             if phase_orientation2 > 4095 {
+        //                 phase_orientation2 -= 4096;
+        //             }
+        //             if phase_orientation3 > 4095 {
+        //                 phase_orientation3 -= 4096;
+        //             }
+        //             let pwm1 = phase_pwm(phase_orientation, max_duty, torque);
+        //             let pwm2 = phase_pwm(phase_orientation2, max_duty, torque);
+        //             let pwm3 = phase_pwm(phase_orientation3, max_duty, torque);
+        // 
+        //             c1.set_duty(pwm1);
+        //             c2.set_duty(pwm2);
+        //             c3.set_duty(pwm3);
+        //         }
+        //         None => {
+        //             c1.set_duty(0);
+        //             c2.set_duty(0);
+        //             c3.set_duty(0);
+        //         }
+        //     }
+        // 
+        //     if counter > 50000 {
+        //         if flag {
+        //             led.set_high()
+        //         } else {
+        //             led.set_low()
+        //         };
+        //         flag = !flag;
+        // 
+        //         counter = 0;
+        // 
+        //         vdda = (3000 * VrefCal::get().read() as u32 / b[0] as u32) as u16;
+        //         vcc = Vref::sample_to_millivolts_ext(
+        //             b[1],
+        //             vdda as u32 * 187 / 18,
+        //             hal::adc::config::Resolution::Twelve,
+        //         );
+        //         // current1 = Vref::sample_to_millivolts_ext(
+        //         //     b[2],
+        //         //     vdda as u32,
+        //         //     hal::adc::config::Resolution::Twelve,
+        //         // ) as i32;
+        // 
+        //         current1 = b[2] as i32;
+        // 
+        //         current3 = Vref::sample_to_millivolts_ext(
+        //             b[3],
+        //             vdda as u32,
+        //             hal::adc::config::Resolution::Twelve,
+        //         ) as i32;
+        // 
+        //         let divider = 220_i64 * 22_i64 + 220_i64 * 15_i64 + 22_i64 * 15_i64;
+        // 
+        //         let bias = 22_i64 * (15_i64 * vdda as i64) * 16_i64 / divider;
+        // 
+        //         // current1 = ((current1 as i64 - bias) * 1000_i64 * divider
+        //         //     / (3_i64 * 16_i64 * 220_i64 * 22_i64)) as i32;
+        //         //current3 = (current3 - bias) * (220 * 22) * 1000 / (divider * 3 * 16);
+        // 
+        //         let data1 = AqueductResponseFrame::ServoState {
+        //             vcc,
+        //             current1: current1,
+        //         };
+        // 
+        //         let v = data1.api_encode().unwrap();
+        //         let d = v.as_slice();
+        // 
+        //         let frame_header = TxFrameHeader {
+        //             len: v.len() as u8,
+        //             frame_format: FrameFormat::Standard,
+        //             id: Standard(StandardId::new(1).unwrap()),
+        //             bit_rate_switching: false,
+        //             marker: None,
+        //         };
+        //         let _ = can.transmit_preserve(frame_header, &d, &mut |_, _, _| {});
+        //         // unwrap
+        //     }
+        // }
 
         match can.receive0(&mut can_rx_buffer) {
             Ok(frame) => {
                 let frame = frame.unwrap();
                 match frame.id {
-                    Standard(id) if id.as_raw() == 10 && frame.len >= 7 => {
-                        match AqueductResponseFrame::api_decode(&can_rx_buffer) {
-                            Ok(AqueductResponseFrame::State {
-                                button,
-                                pump,
-                                weight,
-                            }) => {
-                                if weight >= 0 && weight <= 4096 {
-                                    current_orientation = Some(weight as u16);
-                                } else {
-                                    current_orientation = None
-                                };
-                            }
-                            _ => {}
-                        }
+                    Standard(id) if id.as_raw() == 0 => {
+                        GeneralCommandFrame::api_decode(&can_rx_buffer)
+                            .iter()
+                            .for_each(|gcf| match gcf {
+                                GeneralCommandFrame::RequestChipId1 => {
+                                    let data1 = GeneralResponseFrame::ChipID1 { chip_id1 };
+                                    can.can_transmit(true, slave_address, &data1);
+                                }
+                                GeneralCommandFrame::RequestChipId2 { chip_id1: id } => {
+                                    if id == &chip_id1 {
+                                        let data2 = GeneralResponseFrame::ChipID2 { chip_id2 };
+                                        can.can_transmit(true, slave_address, &data2);
+                                    }
+                                }
+                                GeneralCommandFrame::ChipID1 { chip_id1: id } => {
+                                    if id == &chip_id1 {
+                                        chip_id1_received = true;
+                                        chip_id2_received = false;
+                                    } else {
+                                        chip_id1_received = false;
+                                        chip_id2_received = false;
+                                    }
+                                }
+                                GeneralCommandFrame::ChipID2 { chip_id2: id } => {
+                                    if chip_id1_received && (id == &chip_id2) {
+                                        chip_id2_received = true;
+                                    } else {
+                                        chip_id1_received = false;
+                                        chip_id2_received = false;
+                                    }
+                                }
+                                GeneralCommandFrame::SetChannel { master, slave } => {
+                                    if chip_id1_received && chip_id2_received {
+                                        master_address = *master;
+                                        slave_address = *slave;
+                                    }
+                                }
+                            });
                     }
                     _ => {}
                 }
