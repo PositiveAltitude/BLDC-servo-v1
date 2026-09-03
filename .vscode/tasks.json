@@ -19,8 +19,8 @@
       "command": "arm-none-eabi-objcopy",
       "args": [
         "--output-target", "binary",
-        "./target/thumbv7em-none-eabihf/release/g431_esc",
-        "./target/thumbv7em-none-eabihf/release/g431_esc.bin"],
+        "./target/thumbv7em-none-eabihf/release/bldc-servo",
+        "./target/thumbv7em-none-eabihf/release/bldc-servo.bin"],
       "problemMatcher": [
         "$rustc"
       ],

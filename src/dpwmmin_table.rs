@@ -1,4 +1,6 @@
-pub static DPWMMIN_TABLE:[f32; 5462] = [
+#![allow(clippy::excessive_precision)] // Generated lookup data preserves source precision.
+
+pub static DPWMMIN_TABLE: [f32; 5462] = [
     0.75000000_f32,
     0.75016600_f32,
     0.75033190_f32,

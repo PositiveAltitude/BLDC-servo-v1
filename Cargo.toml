@@ -1,5 +1,5 @@
 [package]
-name = "bldc_esc"
+name = "bldc-servo"
 version = "0.1.0"
 edition = "2021"
 
@@ -14,19 +14,15 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
-cortex-m-rt = "0.7.3"
-cortex-m-semihosting = "0.5.0"
-panic-semihosting = "0.6.0"
-stm32g4xx-hal = {git = "https://github.com/stm32-rs/stm32g4xx-hal.git", rev = "0cd4131", features = ["stm32g431", "rt", "defmt"] }
+cortex-m = { version = "0.7.9", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.6"
+panic-semihosting = "0.7.0"
+stm32g4xx-hal = { version = "0.1.0", features = ["stm32g431", "rt", "defmt", "can"] }
 fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }
-panic-halt = "^0.2.0"
-
-num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 
 
 #nb = "1.1.0"
 #bxcan = "0.6.2"
-bincode = { version = "2.0.0-rc.3", default-features = false, features = ["derive", "alloc"]}
-serde = { version = "1.0.210", default-features = false, features = ["alloc", "derive"] }
-embedded-alloc = "0.6.0"
+# bincode 3.0.0 intentionally does not compile; 2.0.1 is the latest usable release.
+bincode = { version = "2.0.1", default-features = false, features = ["derive", "alloc"] }
+embedded-alloc = "0.7.0"
