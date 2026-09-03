@@ -81,9 +81,11 @@ fn configure_clock(rcc: Rcc, pwr_cfg: PowerConfiguration) -> Rcc {
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
+const PHASE_SHIFT_HALF_PI: u32 = 4096;
+
 #[entry]
 fn main() -> ! {
-    const HEAP_SIZE: usize = 512;
+    const HEAP_SIZE: usize = 1024;
     static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
     unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
 
@@ -129,13 +131,13 @@ fn main() -> ! {
 
         can.into_normal()
     };
-    
+
     // let mut driver_gain = gpiob.pb6.into_push_pull_output();
     // let mut driver_slew = gpiob.pb7.into_push_pull_output();
-    let mut driver_nsleep = gpioa.pa3.into_push_pull_output();
-    
     // driver_gain.set_low().unwrap();
     // driver_slew.set_low().unwrap();
+
+    let mut driver_nsleep = gpioa.pa3.into_push_pull_output();
     driver_nsleep.set_high().unwrap();
 
     let pin_out1 = gpioa.pa8.into_alternate::<6u8>();
@@ -145,74 +147,6 @@ fn main() -> ! {
     let pin_out1n = gpioa.pa7.into_alternate::<6u8>();
     let pin_out2n = gpiob.pb0.into_alternate::<6u8>();
     let pin_out3n = gpiof.pf0.into_alternate::<6u8>();
-
-    // let shunt1_voltage_p = gpioa.pa1.into_analog();
-    // let shunt1_voltage_n = gpioa.pa3.into_analog();
-    // let shunt1_voltage_out = gpioa.pa2.into_analog();
-    //
-    // let shunt2_voltage_out = gpioa.pa6;
-    //
-    // let shunt3_voltage_p = gpiob.pb0.into_analog();
-    // let shunt3_voltage_n = gpiob.pb2.into_analog();
-    // let shunt3_voltage_out = gpiob.pb1.into_analog();
-
-    // dp.OPAMP.opamp1_csr.write(|w| {
-    //     w.vp_sel()
-    //         .vinp0()
-    //         .vm_sel()
-    //         .pga()
-    //         .pga_gain()
-    //         .gain16_input_vinm0()
-    //         .opaintoen()
-    //         .output_pin()
-    //         .opaen()
-    //         .enabled()
-    // });
-
-    // dp.OPAMP.opamp3_csr.write(|w| {
-    //     w.vp_sel()
-    //         .vinp0()
-    //         .vm_sel()
-    //         .pga()
-    //         .pga_gain()
-    //         .gain16_input_vinm0()
-    //         .opaintoen()
-    //         .output_pin()
-    //         .opaen()
-    //         .enabled()
-    // });
-
-    // let dac1 = dp.DAC1.constrain((gpioa.pa4, Dac1IntSig1), &mut rcc);
-    // let mut dac1 = dac1.enable();
-
-    // dac1.set_value(850);
-
-    // let (comp1, comp2, comp3, comp4, ..) = dp.COMP.split(&mut rcc);
-
-    // let comp1 = comp1
-    //     .comparator(
-    //         &shunt1_voltage_p,
-    //         &dac1,
-    //         comparator::Config::default().hysteresis(comparator::Hysteresis::None),
-    //         &rcc.clocks,
-    //     )
-    //     .enable();
-
-    // let comp2 = comp2.comparator(
-    //     &shunt2_voltage_p,
-    //     &dac2,
-    //     comparator::Config::default().hysteresis(comparator::Hysteresis::None),
-    //     &rcc.clocks,
-    // );
-
-    // let comp4 = comp4
-    //     .comparator(
-    //         &shunt3_voltage_p,
-    //         &dac1,
-    //         comparator::Config::default().hysteresis(comparator::Hysteresis::None),
-    //         &rcc.clocks,
-    //     )
-    //     .enable();
 
     let pins = (pin_out1, pin_out2, pin_out3);
 
@@ -230,59 +164,11 @@ fn main() -> ! {
     let mut c2 = c2.into_complementary(pin_out2n);
     let mut c3 = c3.into_complementary(pin_out3n);
 
+    let max_duty = c1.get_max_duty() as f32;
+
     c1.set_duty(0);
     c2.set_duty(0);
     c3.set_duty(0);
-
-    delay.delay_ms(100);
-    
-
-    // let vcc_voltage = gpioa.pa0.into_analog();
-    // let _ntc_voltage = gpiob.pb14.into_analog();
-
-    // let streams = dp.DMA1.split(&rcc);
-    // let config = DmaConfig::default()
-    //     .transfer_complete_interrupt(true)
-    //     .half_transfer_interrupt(true)
-    //     .circular_buffer(true)
-    //     .memory_increment(true);
-
-    // let mut adc = dp
-    //     .ADC1
-    //     .claim(ClockSource::SystemClock, &rcc, &mut delay, true);
-
-    // adc.enable_vref(&dp.ADC12_COMMON);
-    // adc.set_external_trigger((TriggerMode::FallingEdge, Tim_1_trgo));
-    // adc.set_clock_mode(ClockMode::Synchronous_Div_2);
-    // adc.set_clock(Clock::Div_2);
-    // adc.reset_sequence();
-    // adc.configure_channel(&Vref, Sequence::One, SampleTime::Cycles_6_5);
-    // adc.configure_channel(&vcc_voltage, Sequence::Two, SampleTime::Cycles_6_5);
-    // adc.configure_channel(&shunt1_voltage_p, Sequence::Three, SampleTime::Cycles_6_5);
-    // adc.configure_channel(&shunt3_voltage_out, Sequence::Four, SampleTime::Cycles_6_5);
-
-    // let first_buffer = cortex_m::singleton!(: [u16; 100] = [0; 100]).unwrap();
-    // let mut transfer = streams.0.into_circ_peripheral_to_memory_transfer(
-    //     adc.enable_dma(Dma::Continuous),
-    //     &mut first_buffer[..],
-    //     config,
-    // );
-
-    // transfer.start(|adc| adc.start_conversion());
-
-    //enable update trigger
-    // unsafe { tim1_hack.cr2.modify(|r, w| w.mms().bits(0b0111)) }
-    //
-    // let mut vdda = 0u16; // mV
-    //                      //let mut _ntc_temp = 0f32;
-    // let mut vcc = 0u16; // mV
-    // let mut current1 = 0i32; // mA
-    // let mut current3 = 0i32;
-
-    let mut counter = 0u32;
-    let mut flag = false;
-
-    let mut phase_orientation = 0u32;
 
     fn dpwmmin(orientation: u32) -> f32 {
         if orientation > 16383 {
@@ -310,13 +196,6 @@ fn main() -> ! {
         }
     }
 
-    // unsafe {
-    //     tim1_hack.ccr4().write(|w| w.ccr().bits(1400));
-    //     tim1_hack.ccmr2_output().modify(|r, w| w.oc4m().pwm_mode1());
-    //     tim1_hack.ccmr2_output().modify(|r, w| w.oc4pe().set_bit());
-    //     tim1_hack.ccer.modify(|r, w| w.cc4e().set_bit());
-    // }
-
     c1.enable();
     c2.enable();
     c3.enable();
@@ -334,10 +213,6 @@ fn main() -> ! {
         .arr
         .modify(|_, w| unsafe { w.arr().bits(15000 - 1) }); //10 kHz
 
-    // if spi_read_timer.sr.read().uif().bit_is_set() {
-    //     spi_read_timer.sr.modify(|_, w| w.uif().clear_bit());
-    // }
-
     let sclk = gpiob.pb3.into_alternate();
     let miso = gpiob.pb4.into_alternate();
     let mosi = gpiob.pb5.into_alternate();
@@ -348,16 +223,10 @@ fn main() -> ! {
         .SPI1
         .spi((sclk, miso, mosi), spi::MODE_2, 4.MHz(), &mut rcc);
 
-    // let streams = dp.DMA1.split(&rcc);
-    // let config = DmaConfig::default()
-    //     .transfer_complete_interrupt(false)
-    //     .circular_buffer(true)
-    //     .memory_increment(true);
-
     let mut can_rx_buffer = [0u8; 8];
 
-    let mut master_address: u16 = 0;
-    let mut slave_address: u16 = 0;
+    let mut master_address = 0u16;
+    let mut slave_address = 0u16;
 
     let mut chip_id1_received = false;
     let mut chip_id2_received = false;
@@ -368,19 +237,38 @@ fn main() -> ! {
     let chip_id1: [u8; 6] = uid[0..6].try_into().unwrap();
     let chip_id2: [u8; 6] = uid[6..12].try_into().unwrap();
 
-    let encoder_zero = 950u32;
-    let poles_pairs = 7u32;
+    let mut data_rate: u32 = 1;
+    let mut duty_cycle_limit = 1.0f32;
+    let mut reverse_motor = false;
+    let mut velocity_iir_filter_gain = 0.97_f32;
+    let mut inverse_velocity_iir_filter_gain = 1.0 - velocity_iir_filter_gain;
+    
+    let mut position_low_pass_gain = 1.0f32;
+    let mut filtered_set_point= 0u16;
+    let mut filtered_set_point_f32 = 0_f32;
 
+    let mut encoder_zero = 0u32; //950u32;
+    let mut pole_pairs = 7u32;
+
+    let mut current_command: ServoCommandFrame = ServoCommandFrame::Disable;
     let mut current_orientation = Some(0u16);
-    let mut set_point = 0u16;
-    let mut last_orientation = 0u16;
-    let mut velocity = 0u16;
-    let mut orientation_integral = 0i64;
-    let max_orientation_integral = 2048_i64 * 4 * 5_i64 * 50_i64; // Max error max out integral in 2ms
+    let mut orientation_processed = true;
 
-    let p_gain: f32 = 1_f32 / 600_f32;
-    let i_gain: f32 = 0_f32; // 1_f32 / (max_orientation_integral as f32); // max i value = 1
-    let d_gain: f32 = 0_f32;
+    let mut previous_orientation = 0u16;
+    let mut velocity = 0f32;
+    let mut current = 0i16;
+    let mut position_integral = 0i64;
+    let mut max_position_integral = 8192_i64 * 2000;
+
+    let mut max_velocity: f32 = 1_f32;
+    let mut velocity_integral = 0_f32;
+    let mut velocity_integral_cycles_to_max_out: u16 = 2000;
+    let mut max_velocity_integral: f32 = max_velocity * velocity_integral_cycles_to_max_out as f32;
+
+    let mut position_p_gain: f32 = 1_f32 / 500_f32;
+    let mut position_i_gain: f32 = 1_f32 / (max_position_integral as f32); // 1_f32 / (max_orientation_integral as f32); // max i value = 1
+    let mut velocity_p_gain: f32 = 1_f32 / 20_f32;
+    let mut velocity_i_gain: f32 = 1_f32;
 
     fn orientation_delta(o1: u16, o2: u16) -> i32 {
         let tmp: i32 = o2 as i32 - o1 as i32;
@@ -393,30 +281,42 @@ fn main() -> ! {
         }
     }
 
-    let mut pid = move |current_orientation: u16, set_point: u16| -> f32 {
-        let delta = orientation_delta(current_orientation, set_point);
-        orientation_integral += delta as i64;
-        if orientation_integral > max_orientation_integral {
-            orientation_integral = max_orientation_integral
-        }
-        if orientation_integral < -max_orientation_integral {
-            orientation_integral = -max_orientation_integral
-        }
+    macro_rules! pid {
+        ($current_orientation:expr,$set_point:expr) => {{
+            {
+                let setpoint_delta = orientation_delta(filtered_set_point, $set_point);
+                let setpoint_increment_f32 = (setpoint_delta as f32) * position_low_pass_gain + filtered_set_point_f32; 
+                let setpoit_increment = setpoint_increment_f32 as i16;
+                filtered_set_point_f32 = setpoint_increment_f32 - setpoit_increment as f32;
+                
+                let new_filtered_set_point = filtered_set_point as i16 + setpoit_increment;
+                
+                if new_filtered_set_point < 0 {
+                    filtered_set_point = (new_filtered_set_point + 16384_i16) as u16;
+                } else {
+                    filtered_set_point = new_filtered_set_point.rem_euclid(16384_i16) as u16;
+                };
+            }
+            
+            let delta = orientation_delta($current_orientation, filtered_set_point);
+            position_integral += delta as i64;
+            position_integral =
+                position_integral.clamp(-max_position_integral, max_position_integral);
 
-        let p = p_gain * delta as f32;
-        let i = i_gain * orientation_integral as f32;
+            let p = position_p_gain * delta as f32;
+            let i = position_i_gain * position_integral as f32;
 
-        //TODO: velocity and d term
+            let velocity_delta = (p + i).clamp(-max_velocity, max_velocity) - velocity;
+            velocity_integral += velocity_delta;
+            velocity_integral =
+                velocity_integral.clamp(-max_velocity_integral, max_velocity_integral);
 
-        let mut ans = p + i;
-        if ans > 1_f32 {
-            1_f32
-        } else if ans < -1_f32 {
-            -1_f32
-        } else {
-            ans
-        }
-    };
+            let p = velocity_p_gain * velocity_delta;
+            let i = velocity_i_gain * velocity_integral;
+
+            (p + i).clamp(-1.0, 1.0)
+        }};
+    }
 
     trait ApiTransmitter {
         fn can_transmit<T: ApiEncodeDecode>(
@@ -463,7 +363,7 @@ fn main() -> ! {
     let mut cs_pin_set_time = None;
 
     let mut counter = 0u32;
-    
+
     loop {
         if sensor_read_timer.sr.read().uif().bit_is_set() {
             sensor_read_timer.sr.modify(|_, w| w.uif().clear_bit());
@@ -475,6 +375,7 @@ fn main() -> ! {
             None => {}
             Some(t) => {
                 if sensor_read_timer.cnt.read().cnt().bits() > t + 30 {
+                    //TODO: maybe use interrupts here instead
                     //200ns @ 150MHz
                     cs_pin_set_time = None;
                     let mut buffer = [0u8; 2];
@@ -490,17 +391,32 @@ fn main() -> ! {
                     current_orientation =
                         Some((((buffer[0] & 0b01111111u8) as u16) << 7) | (buffer[1] as u16 >> 1));
                     cs_pin.set_high().unwrap();
-                    
-                    
-                    if counter > 10000 {
+
+                    let delta =
+                        orientation_delta(previous_orientation, current_orientation.unwrap());
+                    previous_orientation = current_orientation.unwrap();
+                    velocity = velocity * velocity_iir_filter_gain
+                        + inverse_velocity_iir_filter_gain * delta as f32;
+                    orientation_processed = false;
+
+                    if counter > 10000 / data_rate {
                         counter = 0;
-                        let data = ServoResponseFrame::State {
-                            sensor_detected: false,
-                            position: current_orientation.unwrap_or(666),
-                            velocity: 0,
-                            current: 0,
-                        };
-                        
+                        let data = current_orientation
+                            .map(|o| ServoResponseFrame::State {
+                                sensor_detected: true,
+                                position: current_orientation.unwrap_or(666),
+                                velocity: (velocity / 0.0016)
+                                    .clamp(i16::MIN as f32, i16::MAX as f32)
+                                    as i16, // 1024 = 1rps
+                                current: current,
+                            })
+                            .unwrap_or(ServoResponseFrame::State {
+                                sensor_detected: false,
+                                position: 0,
+                                velocity: 0,
+                                current: 0,
+                            });
+
                         can.can_transmit(false, slave_address, &data);
                     } else {
                         counter += 1;
@@ -509,125 +425,109 @@ fn main() -> ! {
             }
         }
 
-        // phase_orientation = 0;
-        // 
-        // let max_duty = c1.get_max_duty();
-        // let mut phase_orientation2 = phase_orientation + 16384 / 3;
-        // let mut phase_orientation3 = phase_orientation + 16384 * 2 / 3;
-        // if phase_orientation2 > 16383 {
-        //     phase_orientation2 -= 16384;
-        // }
-        // if phase_orientation3 > 16383 {
-        //     phase_orientation3 -= 16384;
-        // }
-        // 
-        // let pwm1 = phase_pwm(phase_orientation, max_duty, 1.0);
-        // let pwm2 = phase_pwm(phase_orientation2, max_duty, 1.0);
-        // let pwm3 = phase_pwm(phase_orientation3, max_duty, 1.0);
-        // 
-        // c1.set_duty(pwm1);
-        // c2.set_duty(pwm2);
-        // c3.set_duty(pwm3);
+        if !orientation_processed {
+            orientation_processed = true;
+            match current_orientation {
+                Some(current_orientation) => match current_command {
+                    ServoCommandFrame::Brake => {
+                        c1.set_duty(0);
+                        c2.set_duty(0);
+                        c3.set_duty(0);
+                        c1.enable();
+                        c2.enable();
+                        c3.enable();
+                    }
+                    ServoCommandFrame::BrushedForceDutyCycle { .. }
+                    | ServoCommandFrame::BrushedHoldPosition { .. } => {
+                        let torque = match current_command {
+                            ServoCommandFrame::BrushedForceDutyCycle { duty_cycle } => duty_cycle,
+                            ServoCommandFrame::BrushedHoldPosition { position } => {
+                                pid!(current_orientation, position)
+                            }
+                            _ => 0.0,
+                        }
+                        .clamp(-1.0, 1.0)
+                            * duty_cycle_limit;
 
-        match current_orientation {
-            Some(current_orientation) => {
-                let mut torque = pid(current_orientation, set_point);
-                let phase_shift_half_pi = 4096;
-                phase_orientation = (16384 + current_orientation as u32 - encoder_zero) * poles_pairs;
-                if torque >= 0_f32 {
-                    phase_orientation += phase_shift_half_pi;
-                } else {
-                    phase_orientation -= phase_shift_half_pi;
-                    torque = -torque;
+                        let (d1, d2) = if (torque > 0.0) ^ reverse_motor {
+                            (0, (torque * max_duty).abs() as u16)
+                        } else {
+                            ((torque * max_duty).abs() as u16, 0)
+                        };
+                        c3.disable();
+                        c1.set_duty(d1);
+                        c2.set_duty(d2);
+                        c1.enable();
+                        c2.enable();
+                    }
+                    ServoCommandFrame::BrushlessHoldPosition { .. }
+                    | ServoCommandFrame::BrushlessForcePosition { .. } => {
+                        let (phase_orientation, torque) = match current_command {
+                            ServoCommandFrame::BrushlessForcePosition { position, power } => {
+                                if position < 16384 {
+                                    (Some(position as u32), power.clamp(0.0, 1.0))
+                                } else {
+                                    (None, 0.0)
+                                }
+                            }
+                            ServoCommandFrame::BrushlessHoldPosition { position } => {
+                                let mut torque = pid!(current_orientation, position);
+                                let mut phase_orientation_raw =
+                                    (16384 + current_orientation as u32 - encoder_zero)
+                                        * pole_pairs;
+                                if torque >= 0_f32 {
+                                    phase_orientation_raw += PHASE_SHIFT_HALF_PI;
+                                } else {
+                                    phase_orientation_raw -= PHASE_SHIFT_HALF_PI;
+                                    torque = -torque;
+                                }
+                                (Some(phase_orientation_raw.rem(16384)), torque)
+                            }
+                            _ => (None, 0.0),
+                        };
+
+                        match phase_orientation {
+                            None => {
+                                c1.disable();
+                                c2.disable();
+                                c3.disable();
+                            }
+                            Some(phase_orientation) => {
+                                let max_duty = c1.get_max_duty();
+                                let mut phase_orientation2 = phase_orientation + 16384 / 3;
+                                let mut phase_orientation3 = phase_orientation + 16384 * 2 / 3;
+                                if phase_orientation2 > 16383 {
+                                    phase_orientation2 -= 16384;
+                                }
+                                if phase_orientation3 > 16383 {
+                                    phase_orientation3 -= 16384;
+                                }
+                                let pwm1 = phase_pwm(phase_orientation, max_duty, torque);
+                                let pwm2 = phase_pwm(phase_orientation2, max_duty, torque);
+                                let pwm3 = phase_pwm(phase_orientation3, max_duty, torque);
+
+                                c1.set_duty(pwm1);
+                                c2.set_duty(pwm2);
+                                c3.set_duty(pwm3);
+                                c1.enable();
+                                c2.enable();
+                                c3.enable();
+                            }
+                        }
+                    }
+                    _ => {
+                        c1.disable();
+                        c2.disable();
+                        c3.disable();
+                    }
+                },
+                None => {
+                    c1.disable();
+                    c2.disable();
+                    c3.disable();
                 }
-                phase_orientation = phase_orientation.rem(16384);
-        
-                let max_duty = c1.get_max_duty();
-                let mut phase_orientation2 = phase_orientation + 16384 / 3;
-                let mut phase_orientation3 = phase_orientation + 16384 * 2 / 3;
-                if phase_orientation2 > 16383 {
-                    phase_orientation2 -= 16384;
-                }
-                if phase_orientation3 > 16383 {
-                    phase_orientation3 -= 16384;
-                }
-                let pwm1 = phase_pwm(phase_orientation, max_duty, torque);
-                let pwm2 = phase_pwm(phase_orientation2, max_duty, torque);
-                let pwm3 = phase_pwm(phase_orientation3, max_duty, torque);
-        
-                c1.set_duty(pwm1);
-                c2.set_duty(pwm2);
-                c3.set_duty(pwm3);
-            }
-            None => {
-                c1.set_duty(0);
-                c2.set_duty(0);
-                c3.set_duty(0);
             }
         }
-        
-        
-        
-        
-        
-        //
-        //     if counter > 50000 {
-        //         if flag {
-        //             led.set_high()
-        //         } else {
-        //             led.set_low()
-        //         };
-        //         flag = !flag;
-        //
-        //         counter = 0;
-        //
-        //         vdda = (3000 * VrefCal::get().read() as u32 / b[0] as u32) as u16;
-        //         vcc = Vref::sample_to_millivolts_ext(
-        //             b[1],
-        //             vdda as u32 * 187 / 18,
-        //             hal::adc::config::Resolution::Twelve,
-        //         );
-        //         // current1 = Vref::sample_to_millivolts_ext(
-        //         //     b[2],
-        //         //     vdda as u32,
-        //         //     hal::adc::config::Resolution::Twelve,
-        //         // ) as i32;
-        //
-        //         current1 = b[2] as i32;
-        //
-        //         current3 = Vref::sample_to_millivolts_ext(
-        //             b[3],
-        //             vdda as u32,
-        //             hal::adc::config::Resolution::Twelve,
-        //         ) as i32;
-        //
-        //         let divider = 220_i64 * 22_i64 + 220_i64 * 15_i64 + 22_i64 * 15_i64;
-        //
-        //         let bias = 22_i64 * (15_i64 * vdda as i64) * 16_i64 / divider;
-        //
-        //         // current1 = ((current1 as i64 - bias) * 1000_i64 * divider
-        //         //     / (3_i64 * 16_i64 * 220_i64 * 22_i64)) as i32;
-        //         //current3 = (current3 - bias) * (220 * 22) * 1000 / (divider * 3 * 16);
-        //
-        //         let data1 = AqueductResponseFrame::ServoState {
-        //             vcc,
-        //             current1: current1,
-        //         };
-        //
-        //         let v = data1.api_encode().unwrap();
-        //         let d = v.as_slice();
-        //
-        //         let frame_header = TxFrameHeader {
-        //             len: v.len() as u8,
-        //             frame_format: FrameFormat::Standard,
-        //             id: Standard(StandardId::new(1).unwrap()),
-        //             bit_rate_switching: false,
-        //             marker: None,
-        //         };
-        //         let _ = can.transmit_preserve(frame_header, &d, &mut |_, _, _| {});
-        //         // unwrap
-        //     }
-        // }
 
         match can.receive0(&mut can_rx_buffer) {
             Ok(frame) => {
@@ -669,6 +569,73 @@ fn main() -> ! {
                                         master_address = *master;
                                         slave_address = *slave;
                                     }
+                                }
+                            });
+                    }
+                    Standard(id) if id.as_raw() == master_address => {
+                        ServoCommandFrame::api_decode(&can_rx_buffer)
+                            .iter()
+                            .for_each(|scf| match scf {
+                                ServoCommandFrame::Disable
+                                | ServoCommandFrame::Brake
+                                | ServoCommandFrame::BrushedHoldPosition { .. }
+                                | ServoCommandFrame::BrushedForceDutyCycle { .. }
+                                | ServoCommandFrame::BrushlessForcePosition { .. }
+                                | ServoCommandFrame::BrushlessHoldPosition { .. } => {
+                                    current_command = scf.clone();
+                                }
+                                ServoCommandFrame::SetPositionPGain { p } => position_p_gain = *p,
+                                ServoCommandFrame::SetPositionIGain {
+                                    i,
+                                    cycles_to_max_out,
+                                } => {
+                                    position_i_gain = *i;
+                                    max_position_integral = 8192_i64 * (*cycles_to_max_out as i64);
+                                }
+                                ServoCommandFrame::SetVelocityPGain { p } => velocity_p_gain = *p,
+                                ServoCommandFrame::SetVelocityIGain {
+                                    i,
+                                    cycles_to_max_out,
+                                } => {
+                                    velocity_i_gain = *i;
+                                    velocity_integral_cycles_to_max_out = *cycles_to_max_out;
+                                    max_velocity_integral =
+                                        max_velocity * velocity_integral_cycles_to_max_out as f32;
+                                }
+                                ServoCommandFrame::SetMaxVelocity { v } => {
+                                    max_velocity = v.clamp(0.0, f32::MAX);
+                                    max_velocity_integral =
+                                        max_velocity * velocity_integral_cycles_to_max_out as f32;
+                                }
+                                ServoCommandFrame::SetDataRate { data_rate: dr } => {
+                                    data_rate = (*dr).clamp(0, 1000) as u32
+                                }
+                                ServoCommandFrame::SetGeneralConfig1 {
+                                    duty_cycle_limit: d,
+                                    reverse_motor: r,
+                                } => {
+                                    duty_cycle_limit = d.clamp(0.0, 1.0);
+                                    reverse_motor = *r;
+                                }
+                                ServoCommandFrame::SetGeneralConfig2 {
+                                    velocity_iir_filter_gain: g,
+                                    sensor_sample_rate_khz, //TODO: adjust sample rate
+                                } => {
+                                    velocity_iir_filter_gain = g.clamp(0.0, 1.0);
+                                    inverse_velocity_iir_filter_gain =
+                                        1.0 - velocity_iir_filter_gain;
+                                }
+                                ServoCommandFrame::SetBrushlessConfig {
+                                    zero_phase: z,
+                                    pole_pairs: p,
+                                } => {
+                                    encoder_zero = *z as u32;
+                                    pole_pairs = *p as u32;
+                                }
+                                ServoCommandFrame::SetPositionLowPassConfig {
+                                    gain
+                                } => {
+                                    position_low_pass_gain = gain.clamp(0.0, 1.0);
                                 }
                             });
                     }

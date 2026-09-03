@@ -21,29 +21,56 @@ pub enum GeneralCommandFrame {
 pub enum ServoCommandFrame {
     Disable,
     Brake,
-    HoldPosition {
-        setpoint: u16,
+    BrushedHoldPosition {
+        position: u16,
     },
-    SetPwm {
+    BrushedForceDutyCycle {
         duty_cycle: f32,
+    },
+    BrushlessHoldPosition {
+        position: u16,
+    },
+    BrushlessForcePosition {
+        position: u16,
+        power: f32,
     },
 
     //Settings
-    SetPGain {
-        p: f32,
-    },
-    SetIGain {
-        i: f32,
-    },
-    SetDGain {
-        d: f32,
-    },
-    SetMotorConfig {
-        duty_cycle_limit: f32,
-        reverse_motor: bool,
-    },
     SetDataRate {
         data_rate: u16,
+    },
+    SetGeneralConfig1 {
+        reverse_motor: bool,
+        duty_cycle_limit: f32,
+    },
+    SetGeneralConfig2 {
+        velocity_iir_filter_gain: f32,
+        sensor_sample_rate_khz: u8,
+        // main_loop_frequency_khz: u8,
+    },
+    SetBrushlessConfig {
+        zero_phase: u16,
+        pole_pairs: u8,
+    },
+    SetPositionPGain {
+        p: f32,
+    },
+    SetPositionIGain {
+        i: f32,
+        cycles_to_max_out: u16,
+    },
+    SetVelocityPGain {
+        p: f32,
+    },
+    SetVelocityIGain {
+        i: f32,
+        cycles_to_max_out: u16,
+    },
+    SetMaxVelocity {
+        v: f32
+    },
+    SetPositionLowPassConfig {
+        gain: f32,
     }
 }
 
