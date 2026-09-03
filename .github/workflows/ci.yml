@@ -28,11 +28,23 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run Clippy
-        run: cargo clippy --locked -- -D warnings
+      - name: Lint firmware
+        run: cargo clippy --package bldc-servo --locked -- -D warnings
 
-      - name: Check compilation
-        run: cargo check --locked
+      - name: Lint protocol crate
+        run: cargo clippy --package bldc-servo-protocol --all-targets --target x86_64-unknown-linux-gnu --locked -- -D warnings
+
+      - name: Lint controller library
+        run: cargo clippy --package bldc-servo --lib --target x86_64-unknown-linux-gnu --locked -- -D warnings
+
+      - name: Test protocol crate
+        run: cargo test --package bldc-servo-protocol --target x86_64-unknown-linux-gnu --locked
+
+      - name: Test controller library
+        run: cargo test --package bldc-servo --lib --target x86_64-unknown-linux-gnu --locked
+
+      - name: Check firmware compilation
+        run: cargo check --package bldc-servo --locked
 
       - name: Build release firmware
-        run: cargo build --release --locked
+        run: cargo build --package bldc-servo --release --locked
