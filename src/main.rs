@@ -3,17 +3,19 @@
 #![no_main]
 #![no_std]
 
-mod can_api;
 mod dpwmmin_table;
 
-use core::mem::MaybeUninit;
+use bldc_servo::control::PositionPid;
+use bldc_servo_protocol::{
+    ApiEncodeDecode, GeneralCommandFrame, GeneralResponseFrame, ServoCommandFrame,
+    ServoResponseFrame,
+};
 use core::num::{NonZeroU16, NonZeroU8};
 use core::ops::Rem;
 use cortex_m::delay::Delay;
 use hal::prelude::*;
 use hal::stm32;
 use stm32g4xx_hal as hal;
-extern crate alloc;
 extern crate panic_semihosting;
 
 use cortex_m_rt::entry;
@@ -24,14 +26,12 @@ use stm32g4xx_hal::rcc::PllRDiv::DIV_2;
 use stm32g4xx_hal::rcc::PllSrc::HSI;
 use stm32g4xx_hal::rcc::{Config, FdCanClockSource, PllConfig, Rcc, SysClockSrc};
 
-use crate::can_api::*;
 use fdcan::config::NominalBitTiming;
 use fdcan::filter::{StandardFilter, StandardFilterSlot};
 use fdcan::frame::{FrameFormat, TxFrameHeader};
 use fdcan::id::Id::Standard;
 use fdcan::id::StandardId;
 // use stm32g4xx_hal::gpio::Speed;
-use embedded_alloc::LlffHeap as Heap;
 use fdcan::{FdCan, NormalOperationMode};
 use hal::hal_02::PwmPin;
 use hal::pwm::PwmAdvExt;
@@ -60,17 +60,10 @@ fn configure_clock(rcc: Rcc, pwr_cfg: PowerConfiguration) -> Rcc {
     )
 }
 
-#[global_allocator]
-static HEAP: Heap = Heap::empty();
-
 const PHASE_SHIFT_HALF_PI: u32 = 4096;
 
 #[entry]
 fn main() -> ! {
-    const HEAP_SIZE: usize = 1024;
-    static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-    unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
-
     let dp = stm32::Peripherals::take().expect("cannot take peripherals");
     let _cp = cortex_m::Peripherals::take().expect("cannot take core peripherals");
 
@@ -239,7 +232,7 @@ fn main() -> ! {
     let mut previous_orientation = 0u16;
     let mut velocity = 0f32;
     let current = 0i16;
-    let mut position_integral = 0i64;
+    let mut brushless_position_integral = 0_i64;
     let mut max_position_integral = 8192_i64 * 2000;
 
     let mut max_velocity: f32 = 1_f32;
@@ -251,6 +244,8 @@ fn main() -> ! {
     let mut position_i_gain: f32 = 1_f32 / (max_position_integral as f32); // 1_f32 / (max_orientation_integral as f32); // max i value = 1
     let mut velocity_p_gain: f32 = 1_f32 / 20_f32;
     let mut velocity_i_gain: f32 = 1_f32;
+    let mut brushed_position_pid =
+        PositionPid::new(position_p_gain, position_i_gain, 0.0, max_position_integral);
 
     fn orientation_delta(o1: u16, o2: u16) -> i32 {
         let tmp: i32 = o2 as i32 - o1 as i32;
@@ -263,31 +258,34 @@ fn main() -> ! {
         }
     }
 
-    macro_rules! pid {
-        ($current_orientation:expr,$set_point:expr) => {{
-            {
-                let setpoint_delta = orientation_delta(filtered_set_point, $set_point);
-                let setpoint_increment_f32 =
-                    (setpoint_delta as f32) * position_low_pass_gain + filtered_set_point_f32;
-                let setpoit_increment = setpoint_increment_f32 as i16;
-                filtered_set_point_f32 = setpoint_increment_f32 - setpoit_increment as f32;
+    macro_rules! update_filtered_setpoint {
+        ($set_point:expr) => {{
+            let setpoint_delta = orientation_delta(filtered_set_point, $set_point);
+            let setpoint_increment_f32 =
+                (setpoint_delta as f32) * position_low_pass_gain + filtered_set_point_f32;
+            let setpoint_increment = setpoint_increment_f32 as i16;
+            filtered_set_point_f32 = setpoint_increment_f32 - setpoint_increment as f32;
 
-                let new_filtered_set_point = filtered_set_point as i16 + setpoit_increment;
-
-                if new_filtered_set_point < 0 {
-                    filtered_set_point = (new_filtered_set_point + 16384_i16) as u16;
-                } else {
-                    filtered_set_point = new_filtered_set_point.rem_euclid(16384_i16) as u16;
-                };
+            let new_filtered_set_point = filtered_set_point as i16 + setpoint_increment;
+            if new_filtered_set_point < 0 {
+                filtered_set_point = (new_filtered_set_point + 16384_i16) as u16;
+            } else {
+                filtered_set_point = new_filtered_set_point.rem_euclid(16384_i16) as u16;
             }
+        }};
+    }
+
+    macro_rules! brushless_cascaded_pi {
+        ($current_orientation:expr, $set_point:expr) => {{
+            update_filtered_setpoint!($set_point);
 
             let delta = orientation_delta($current_orientation, filtered_set_point);
-            position_integral += delta as i64;
-            position_integral =
-                position_integral.clamp(-max_position_integral, max_position_integral);
+            brushless_position_integral += delta as i64;
+            brushless_position_integral =
+                brushless_position_integral.clamp(-max_position_integral, max_position_integral);
 
             let p = position_p_gain * delta as f32;
-            let i = position_i_gain * position_integral as f32;
+            let i = position_i_gain * brushless_position_integral as f32;
 
             let velocity_delta = (p + i).clamp(-max_velocity, max_velocity) - velocity;
             velocity_integral += velocity_delta;
@@ -322,8 +320,8 @@ fn main() -> ! {
                     address = 1
                 }
 
-                let data_vec = data.api_encode().unwrap();
-                let data = data_vec.as_slice();
+                let encoded = data.api_encode().unwrap();
+                let data = encoded.as_slice();
 
                 self.transmit(
                     TxFrameHeader {
@@ -412,7 +410,10 @@ fn main() -> ! {
                         let torque = match current_command {
                             ServoCommandFrame::BrushedForceDutyCycle { duty_cycle } => duty_cycle,
                             ServoCommandFrame::BrushedHoldPosition { position } => {
-                                pid!(current_orientation, position)
+                                update_filtered_setpoint!(position);
+                                let error =
+                                    orientation_delta(current_orientation, filtered_set_point);
+                                brushed_position_pid.update(error)
                             }
                             _ => 0.0,
                         }
@@ -441,7 +442,8 @@ fn main() -> ! {
                                 }
                             }
                             ServoCommandFrame::BrushlessHoldPosition { position } => {
-                                let mut torque = pid!(current_orientation, position);
+                                let mut torque =
+                                    brushless_cascaded_pi!(current_orientation, position);
                                 let mut phase_orientation_raw =
                                     (16384 + current_orientation as u32 - encoder_zero)
                                         * pole_pairs;
@@ -551,15 +553,35 @@ fn main() -> ! {
                             | ServoCommandFrame::BrushedForceDutyCycle { .. }
                             | ServoCommandFrame::BrushlessForcePosition { .. }
                             | ServoCommandFrame::BrushlessHoldPosition { .. } => {
+                                if core::mem::discriminant(&current_command)
+                                    != core::mem::discriminant(scf)
+                                {
+                                    brushed_position_pid.reset();
+                                    brushless_position_integral = 0;
+                                    velocity_integral = 0.0;
+                                    filtered_set_point =
+                                        current_orientation.unwrap_or(filtered_set_point);
+                                    filtered_set_point_f32 = 0.0;
+                                }
                                 current_command = scf.clone();
                             }
-                            ServoCommandFrame::SetPositionPGain { p } => position_p_gain = *p,
+                            ServoCommandFrame::SetPositionPGain { p } => {
+                                position_p_gain = *p;
+                                brushed_position_pid.set_p_gain(*p);
+                            }
                             ServoCommandFrame::SetPositionIGain {
                                 i,
                                 cycles_to_max_out,
                             } => {
                                 position_i_gain = *i;
                                 max_position_integral = 8192_i64 * (*cycles_to_max_out as i64);
+                                brushed_position_pid.set_i_gain(*i);
+                                brushed_position_pid.set_integral_limit(max_position_integral);
+                                brushless_position_integral = brushless_position_integral
+                                    .clamp(-max_position_integral, max_position_integral);
+                            }
+                            ServoCommandFrame::SetPositionDGain { d } => {
+                                brushed_position_pid.set_d_gain(*d)
                             }
                             ServoCommandFrame::SetVelocityPGain { p } => velocity_p_gain = *p,
                             ServoCommandFrame::SetVelocityIGain {

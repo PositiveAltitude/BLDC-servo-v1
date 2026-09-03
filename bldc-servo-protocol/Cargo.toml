@@ -1,0 +1,10 @@
+[package]
+name = "bldc-servo-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "CAN message contract and codec for the BLDC servo firmware"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# bincode 3.0.0 intentionally does not compile; 2.0.1 is the latest usable release.
+bincode = { version = "2.0.1", default-features = false, features = ["derive"] }

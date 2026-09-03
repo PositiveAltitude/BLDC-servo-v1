@@ -3,6 +3,10 @@ name = "bldc-servo"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["bldc-servo-protocol"]
+resolver = "2"
+
 [profile.release]
 opt-level = 'z'
 lto = true
@@ -13,16 +17,10 @@ opt-level = 'z'
 lto = true
 codegen-units = 1
 
-[dependencies]
+[target.'cfg(target_arch = "arm")'.dependencies]
+bldc-servo-protocol = { path = "bldc-servo-protocol" }
 cortex-m = { version = "0.7.9", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.6"
 panic-semihosting = "0.7.0"
 stm32g4xx-hal = { version = "0.1.0", features = ["stm32g431", "rt", "defmt", "can"] }
 fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }
-
-
-#nb = "1.1.0"
-#bxcan = "0.6.2"
-# bincode 3.0.0 intentionally does not compile; 2.0.1 is the latest usable release.
-bincode = { version = "2.0.1", default-features = false, features = ["derive", "alloc"] }
-embedded-alloc = "0.7.0"
