@@ -67,11 +67,11 @@ pub enum ServoCommandFrame {
         cycles_to_max_out: u16,
     },
     SetMaxVelocity {
-        v: f32
+        v: f32,
     },
     SetPositionLowPassConfig {
         gain: f32,
-    }
+    },
 }
 
 #[derive(Encode, Decode, PartialEq, Debug, Clone)]
@@ -84,12 +84,12 @@ pub enum ServoResponseFrame {
     },
 }
 
-pub trait ApiEncodeDecode: Encode + Decode {
+pub trait ApiEncodeDecode: Encode + Decode<()> {
     fn api_encode(&self) -> Result<Vec<u8>, EncodeError> {
         let config = config::standard()
             .with_big_endian()
             .with_fixed_int_encoding();
-        let vec = bincode::encode_to_vec(&self, config);
+        let vec = bincode::encode_to_vec(self, config);
 
         match vec {
             Ok(vec) => {

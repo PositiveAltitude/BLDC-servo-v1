@@ -10,7 +10,7 @@
       "request": "launch",
       "type": "cortex-debug",
       "cwd": "${workspaceRoot}",
-      "executable": "${workspaceFolder}/target/thumbv7em-none-eabihf/release/g431_esc",
+      "executable": "${workspaceFolder}/target/thumbv7em-none-eabihf/release/bldc-servo",
       "svdFile": "${workspaceFolder}/STM32G431.svd",
       "servertype": "openocd",
       "configFiles": ["interface/stlink.cfg", "target/stm32g4x.cfg"],
@@ -19,7 +19,7 @@
         "monitor init",
         "monitor reset init",
         "monitor halt",
-        "monitor flash write_image erase ./target/thumbv7em-none-eabihf/release/g431_esc.bin 0x08000000"
+        "monitor flash write_image erase ./target/thumbv7em-none-eabihf/release/bldc-servo.bin 0x08000000"
       ],
       "showDevDebugOutput": "raw",
       "postLaunchCommands": ["continue"] // Don't stop before at the first line

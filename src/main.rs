@@ -6,8 +6,6 @@
 mod can_api;
 mod dpwmmin_table;
 
-use bincode::error::DecodeError;
-use core::f32::consts::PI;
 use core::mem::MaybeUninit;
 use core::num::{NonZeroU16, NonZeroU8};
 use core::ops::Rem;
@@ -20,62 +18,46 @@ extern crate panic_semihosting;
 
 use cortex_m_rt::entry;
 use stm32g4xx_hal::can::{Can, CanExt};
-use stm32g4xx_hal::rcc::PllMDiv::{DIV_4, DIV_8};
+use stm32g4xx_hal::rcc::PllMDiv::DIV_4;
 use stm32g4xx_hal::rcc::PllNMul::MUL_75;
 use stm32g4xx_hal::rcc::PllRDiv::DIV_2;
 use stm32g4xx_hal::rcc::PllSrc::HSI;
-use stm32g4xx_hal::rcc::{Config, FdCanClockSource, PllConfig, PllPDiv, Rcc, SysClockSrc};
+use stm32g4xx_hal::rcc::{Config, FdCanClockSource, PllConfig, Rcc, SysClockSrc};
 
 use crate::can_api::*;
-use fdcan::config::{DataBitTiming, NominalBitTiming};
+use fdcan::config::NominalBitTiming;
 use fdcan::filter::{StandardFilter, StandardFilterSlot};
-use fdcan::frame::{FrameFormat, RxFrameInfo, TxFrameHeader};
+use fdcan::frame::{FrameFormat, TxFrameHeader};
 use fdcan::id::Id::Standard;
-use fdcan::id::{Id, StandardId};
-use hal::adc::AdcClaim;
-use hal::dma::{config::DmaConfig, stream::DMAExt};
-use stm32g4xx_hal::adc::config::{
-    Clock, ClockMode, Continuous, Dma, SampleTime, Sequence, TriggerMode,
-};
-use stm32g4xx_hal::adc::{ClockSource, Vref};
-use stm32g4xx_hal::dma::TransferExt;
-use stm32g4xx_hal::signature::VrefCal;
+use fdcan::id::StandardId;
 // use stm32g4xx_hal::gpio::Speed;
 use embedded_alloc::LlffHeap as Heap;
-use fdcan::{FdCan, NormalOperationMode, ReceiveOverrun};
+use fdcan::{FdCan, NormalOperationMode};
+use hal::hal_02::PwmPin;
 use hal::pwm::PwmAdvExt;
-use stm32g4xx_hal::comparator::{self, ComparatorExt, ComparatorSplit};
-use stm32g4xx_hal::dac::{Dac1IntSig1, Dac1IntSig2, Dac2IntSig1, DacExt, DacOut};
 
 use crate::dpwmmin_table::DPWMMIN_TABLE;
-use num_traits::real::Real;
-use num_traits::ToPrimitive;
-use stm32g4xx_hal::adc::config::ExternalTrigger12::{Tim_1_cc_1, Tim_1_trgo};
-use stm32g4xx_hal::gpio::Speed;
 use stm32g4xx_hal::hal::spi;
-use stm32g4xx_hal::pac::{FDCAN1, PWR, RCC};
-use stm32g4xx_hal::pwm::Polarity;
+use stm32g4xx_hal::pac::{FDCAN1, RCC};
 use stm32g4xx_hal::pwr::{PowerConfiguration, PwrExt};
-use stm32g4xx_hal::rcc::PllPDiv::DIV_9;
-use stm32g4xx_hal::time::{ExtU32, NanoSecond, RateExtU32};
-use stm32g4xx_hal::timer::Timer;
+use stm32g4xx_hal::time::{ExtU32, RateExtU32};
 
 fn configure_clock(rcc: Rcc, pwr_cfg: PowerConfiguration) -> Rcc {
-    let mut pll_config = PllConfig::default();
-    //150 MHz
-    pll_config.m = DIV_4;
-    pll_config.mux = HSI;
-    pll_config.n = MUL_75;
-    pll_config.r = Some(DIV_2);
-    // pll_config.p = Some(PllPDiv::DIV_28);
+    let pll_config = PllConfig {
+        // 150 MHz
+        m: DIV_4,
+        mux: HSI,
+        n: MUL_75,
+        r: Some(DIV_2),
+        ..PllConfig::default()
+    };
 
-    let rcc = rcc.freeze(
+    rcc.freeze(
         Config::new(SysClockSrc::PLL)
             .pll_cfg(pll_config)
             .fdcan_src(FdCanClockSource::PCLK),
         pwr_cfg,
-    );
-    rcc
+    )
 }
 
 #[global_allocator]
@@ -87,12 +69,12 @@ const PHASE_SHIFT_HALF_PI: u32 = 4096;
 fn main() -> ! {
     const HEAP_SIZE: usize = 1024;
     static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-    unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
+    unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
 
     let dp = stm32::Peripherals::take().expect("cannot take peripherals");
     let _cp = cortex_m::Peripherals::take().expect("cannot take core peripherals");
 
-    dp.RCC.apb2enr.write(|w| w.syscfgen().set_bit());
+    dp.RCC.apb2enr().write(|w| w.syscfgen().set_bit());
 
     let pwr = dp.PWR.constrain();
     let pwr_cfg = pwr.freeze();
@@ -100,18 +82,18 @@ fn main() -> ! {
     let rcc = dp.RCC.constrain();
     let mut rcc = configure_clock(rcc, pwr_cfg);
 
-    let mut delay = Delay::new(_cp.SYST, rcc.clocks.ahb_clk.to_Hz());
+    let _delay = Delay::new(_cp.SYST, rcc.clocks.ahb_clk.to_Hz());
 
     let gpioa = dp.GPIOA.split(&mut rcc);
     let gpiob = dp.GPIOB.split(&mut rcc);
-    let gpioc = dp.GPIOC.split(&mut rcc);
+    let _gpioc = dp.GPIOC.split(&mut rcc);
     let gpiof = dp.GPIOF.split(&mut rcc);
 
     let mut can = {
         let rx = gpioa.pa11.into_alternate::<9u8>(); //.set_speed(Speed::VeryHigh);
         let tx = gpioa.pa12.into_alternate::<9u8>(); //.set_speed(Speed::VeryHigh);
 
-        let mut can = dp.FDCAN1.fdcan(tx, rx, &rcc);
+        let mut can = dp.FDCAN1.fdcan(tx, rx, &mut rcc);
 
         can.set_protocol_exception_handling(false);
 
@@ -138,7 +120,7 @@ fn main() -> ! {
     // driver_slew.set_low().unwrap();
 
     let mut driver_nsleep = gpioa.pa3.into_push_pull_output();
-    driver_nsleep.set_high().unwrap();
+    driver_nsleep.set_high();
 
     let pin_out1 = gpioa.pa8.into_alternate::<6u8>();
     let pin_out2 = gpioa.pa9.into_alternate::<6u8>();
@@ -150,7 +132,7 @@ fn main() -> ! {
 
     let pins = (pin_out1, pin_out2, pin_out3);
 
-    let (mut tim1_control, (c1, c2, c3)) = dp
+    let (_tim1_control, (c1, c2, c3)) = dp
         .TIM1
         .pwm_advanced(pins, &mut rcc)
         .frequency(50.kHz())
@@ -183,7 +165,7 @@ fn main() -> ! {
     }
 
     fn phase_pwm(orientation: u32, max_pwm: u16, torque: f32) -> u16 {
-        if torque > 1_f32 || torque < 0_f32 {
+        if !(0_f32..=1_f32).contains(&torque) {
             0_u16
         } else {
             let mut value: f32 = dpwmmin(orientation);
@@ -203,21 +185,21 @@ fn main() -> ! {
     // TIM2
 
     let rcc_hack = unsafe { &(*RCC::ptr()) };
-    let mut sensor_read_timer = dp.TIM2;
-    rcc_hack.apb1enr1.modify(|_, w| w.tim2en().set_bit());
-    sensor_read_timer.dier.modify(|_, w| w.uie().set_bit());
+    let sensor_read_timer = dp.TIM2;
+    rcc_hack.apb1enr1().modify(|_, w| w.tim2en().set_bit());
+    sensor_read_timer.dier().modify(|_, w| w.uie().set_bit());
     sensor_read_timer
-        .psc
+        .psc()
         .modify(|_, w| unsafe { w.psc().bits(0) });
     sensor_read_timer
-        .arr
+        .arr()
         .modify(|_, w| unsafe { w.arr().bits(15000 - 1) }); //10 kHz
 
     let sclk = gpiob.pb3.into_alternate();
     let miso = gpiob.pb4.into_alternate();
     let mosi = gpiob.pb5.into_alternate();
     let mut cs_pin = gpioa.pa4.into_push_pull_output();
-    cs_pin.set_high().unwrap();
+    cs_pin.set_high();
 
     let mut spi = dp
         .SPI1
@@ -242,9 +224,9 @@ fn main() -> ! {
     let mut reverse_motor = false;
     let mut velocity_iir_filter_gain = 0.97_f32;
     let mut inverse_velocity_iir_filter_gain = 1.0 - velocity_iir_filter_gain;
-    
+
     let mut position_low_pass_gain = 1.0f32;
-    let mut filtered_set_point= 0u16;
+    let mut filtered_set_point = 0u16;
     let mut filtered_set_point_f32 = 0_f32;
 
     let mut encoder_zero = 0u32; //950u32;
@@ -256,7 +238,7 @@ fn main() -> ! {
 
     let mut previous_orientation = 0u16;
     let mut velocity = 0f32;
-    let mut current = 0i16;
+    let current = 0i16;
     let mut position_integral = 0i64;
     let mut max_position_integral = 8192_i64 * 2000;
 
@@ -285,19 +267,20 @@ fn main() -> ! {
         ($current_orientation:expr,$set_point:expr) => {{
             {
                 let setpoint_delta = orientation_delta(filtered_set_point, $set_point);
-                let setpoint_increment_f32 = (setpoint_delta as f32) * position_low_pass_gain + filtered_set_point_f32; 
+                let setpoint_increment_f32 =
+                    (setpoint_delta as f32) * position_low_pass_gain + filtered_set_point_f32;
                 let setpoit_increment = setpoint_increment_f32 as i16;
                 filtered_set_point_f32 = setpoint_increment_f32 - setpoit_increment as f32;
-                
+
                 let new_filtered_set_point = filtered_set_point as i16 + setpoit_increment;
-                
+
                 if new_filtered_set_point < 0 {
                     filtered_set_point = (new_filtered_set_point + 16384_i16) as u16;
                 } else {
                     filtered_set_point = new_filtered_set_point.rem_euclid(16384_i16) as u16;
                 };
             }
-            
+
             let delta = orientation_delta($current_orientation, filtered_set_point);
             position_integral += delta as i64;
             position_integral =
@@ -346,9 +329,7 @@ fn main() -> ! {
                     TxFrameHeader {
                         len: data.len() as u8,
                         frame_format: FrameFormat::Standard,
-                        id: Standard {
-                            0: StandardId::new(address).unwrap(),
-                        },
+                        id: Standard(StandardId::new(address).unwrap()),
                         bit_rate_switching: false,
                         marker: None,
                     },
@@ -358,71 +339,60 @@ fn main() -> ! {
             }
         }
     }
-    sensor_read_timer.cr1.modify(|_, w| w.cen().set_bit());
+    sensor_read_timer.cr1().modify(|_, w| w.cen().set_bit());
 
     let mut cs_pin_set_time = None;
 
     let mut counter = 0u32;
 
     loop {
-        if sensor_read_timer.sr.read().uif().bit_is_set() {
-            sensor_read_timer.sr.modify(|_, w| w.uif().clear_bit());
-            cs_pin.set_low().unwrap();
-            cs_pin_set_time = Some(sensor_read_timer.cnt.read().cnt().bits());
+        if sensor_read_timer.sr().read().uif().bit_is_set() {
+            sensor_read_timer.sr().modify(|_, w| w.uif().clear_bit());
+            cs_pin.set_low();
+            cs_pin_set_time = Some(sensor_read_timer.cnt().read().cnt().bits());
         }
 
         match cs_pin_set_time {
             None => {}
-            Some(t) => {
-                if sensor_read_timer.cnt.read().cnt().bits() > t + 30 {
-                    //TODO: maybe use interrupts here instead
-                    //200ns @ 150MHz
-                    cs_pin_set_time = None;
-                    let mut buffer = [0u8; 2];
-                    let result = spi.transfer(buffer.as_mut_slice()).unwrap();
-                    let mut buffer = [0u8; 2];
-                    let mut i = 0usize;
-                    result.iter().for_each(|x| {
-                        if i <= 1 {
-                            buffer[i] = *x;
-                            i += 1;
-                        }
-                    });
-                    current_orientation =
-                        Some((((buffer[0] & 0b01111111u8) as u16) << 7) | (buffer[1] as u16 >> 1));
-                    cs_pin.set_high().unwrap();
+            Some(t) if sensor_read_timer.cnt().read().cnt().bits() > t + 30 => {
+                //TODO: maybe use interrupts here instead
+                //200ns @ 150MHz
+                cs_pin_set_time = None;
+                let mut buffer = [0u8; 2];
+                spi.transfer_in_place(buffer.as_mut_slice()).unwrap();
+                current_orientation =
+                    Some((((buffer[0] & 0b01111111u8) as u16) << 7) | (buffer[1] as u16 >> 1));
+                cs_pin.set_high();
 
-                    let delta =
-                        orientation_delta(previous_orientation, current_orientation.unwrap());
-                    previous_orientation = current_orientation.unwrap();
-                    velocity = velocity * velocity_iir_filter_gain
-                        + inverse_velocity_iir_filter_gain * delta as f32;
-                    orientation_processed = false;
+                let delta = orientation_delta(previous_orientation, current_orientation.unwrap());
+                previous_orientation = current_orientation.unwrap();
+                velocity = velocity * velocity_iir_filter_gain
+                    + inverse_velocity_iir_filter_gain * delta as f32;
+                orientation_processed = false;
 
-                    if counter > 10000 / data_rate {
-                        counter = 0;
-                        let data = current_orientation
-                            .map(|o| ServoResponseFrame::State {
-                                sensor_detected: true,
-                                position: current_orientation.unwrap_or(666),
-                                velocity: (velocity / 0.0016)
-                                    .clamp(i16::MIN as f32, i16::MAX as f32)
-                                    as i16, // 1024 = 1rps
-                                current: current,
-                            })
-                            .unwrap_or(ServoResponseFrame::State {
-                                sensor_detected: false,
-                                position: 0,
-                                velocity: 0,
-                                current: 0,
-                            });
+                if counter > 10000 / data_rate {
+                    counter = 0;
+                    let data = current_orientation
+                        .map(|position| ServoResponseFrame::State {
+                            sensor_detected: true,
+                            position,
+                            velocity: (velocity / 0.0016).clamp(i16::MIN as f32, i16::MAX as f32)
+                                as i16, // 1024 = 1rps
+                            current,
+                        })
+                        .unwrap_or(ServoResponseFrame::State {
+                            sensor_detected: false,
+                            position: 0,
+                            velocity: 0,
+                            current: 0,
+                        });
 
-                        can.can_transmit(false, slave_address, &data);
-                    } else {
-                        counter += 1;
-                    }
+                    can.can_transmit(false, slave_address, &data);
+                } else {
+                    counter += 1;
                 }
             }
+            Some(_) => {}
         }
 
         if !orientation_processed {
@@ -529,120 +499,114 @@ fn main() -> ! {
             }
         }
 
-        match can.receive0(&mut can_rx_buffer) {
-            Ok(frame) => {
-                let frame = frame.unwrap();
-                match frame.id {
-                    Standard(id) if id.as_raw() == 0 => {
-                        GeneralCommandFrame::api_decode(&can_rx_buffer)
-                            .iter()
-                            .for_each(|gcf| match gcf {
-                                GeneralCommandFrame::RequestChipId1 => {
-                                    let data1 = GeneralResponseFrame::ChipID1 { chip_id1 };
-                                    can.can_transmit(true, slave_address, &data1);
+        if let Ok(frame) = can.receive0(&mut can_rx_buffer) {
+            let frame = frame.unwrap();
+            match frame.id {
+                Standard(id) if id.as_raw() == 0 => {
+                    GeneralCommandFrame::api_decode(&can_rx_buffer)
+                        .iter()
+                        .for_each(|gcf| match gcf {
+                            GeneralCommandFrame::RequestChipId1 => {
+                                let data1 = GeneralResponseFrame::ChipID1 { chip_id1 };
+                                can.can_transmit(true, slave_address, &data1);
+                            }
+                            GeneralCommandFrame::RequestChipId2 { chip_id1: id } => {
+                                if id == &chip_id1 {
+                                    let data2 = GeneralResponseFrame::ChipID2 { chip_id2 };
+                                    can.can_transmit(true, slave_address, &data2);
                                 }
-                                GeneralCommandFrame::RequestChipId2 { chip_id1: id } => {
-                                    if id == &chip_id1 {
-                                        let data2 = GeneralResponseFrame::ChipID2 { chip_id2 };
-                                        can.can_transmit(true, slave_address, &data2);
-                                    }
+                            }
+                            GeneralCommandFrame::ChipID1 { chip_id1: id } => {
+                                if id == &chip_id1 {
+                                    chip_id1_received = true;
+                                    chip_id2_received = false;
+                                } else {
+                                    chip_id1_received = false;
+                                    chip_id2_received = false;
                                 }
-                                GeneralCommandFrame::ChipID1 { chip_id1: id } => {
-                                    if id == &chip_id1 {
-                                        chip_id1_received = true;
-                                        chip_id2_received = false;
-                                    } else {
-                                        chip_id1_received = false;
-                                        chip_id2_received = false;
-                                    }
+                            }
+                            GeneralCommandFrame::ChipID2 { chip_id2: id } => {
+                                if chip_id1_received && (id == &chip_id2) {
+                                    chip_id2_received = true;
+                                } else {
+                                    chip_id1_received = false;
+                                    chip_id2_received = false;
                                 }
-                                GeneralCommandFrame::ChipID2 { chip_id2: id } => {
-                                    if chip_id1_received && (id == &chip_id2) {
-                                        chip_id2_received = true;
-                                    } else {
-                                        chip_id1_received = false;
-                                        chip_id2_received = false;
-                                    }
+                            }
+                            GeneralCommandFrame::SetChannel { master, slave } => {
+                                if chip_id1_received && chip_id2_received {
+                                    master_address = *master;
+                                    slave_address = *slave;
                                 }
-                                GeneralCommandFrame::SetChannel { master, slave } => {
-                                    if chip_id1_received && chip_id2_received {
-                                        master_address = *master;
-                                        slave_address = *slave;
-                                    }
-                                }
-                            });
-                    }
-                    Standard(id) if id.as_raw() == master_address => {
-                        ServoCommandFrame::api_decode(&can_rx_buffer)
-                            .iter()
-                            .for_each(|scf| match scf {
-                                ServoCommandFrame::Disable
-                                | ServoCommandFrame::Brake
-                                | ServoCommandFrame::BrushedHoldPosition { .. }
-                                | ServoCommandFrame::BrushedForceDutyCycle { .. }
-                                | ServoCommandFrame::BrushlessForcePosition { .. }
-                                | ServoCommandFrame::BrushlessHoldPosition { .. } => {
-                                    current_command = scf.clone();
-                                }
-                                ServoCommandFrame::SetPositionPGain { p } => position_p_gain = *p,
-                                ServoCommandFrame::SetPositionIGain {
-                                    i,
-                                    cycles_to_max_out,
-                                } => {
-                                    position_i_gain = *i;
-                                    max_position_integral = 8192_i64 * (*cycles_to_max_out as i64);
-                                }
-                                ServoCommandFrame::SetVelocityPGain { p } => velocity_p_gain = *p,
-                                ServoCommandFrame::SetVelocityIGain {
-                                    i,
-                                    cycles_to_max_out,
-                                } => {
-                                    velocity_i_gain = *i;
-                                    velocity_integral_cycles_to_max_out = *cycles_to_max_out;
-                                    max_velocity_integral =
-                                        max_velocity * velocity_integral_cycles_to_max_out as f32;
-                                }
-                                ServoCommandFrame::SetMaxVelocity { v } => {
-                                    max_velocity = v.clamp(0.0, f32::MAX);
-                                    max_velocity_integral =
-                                        max_velocity * velocity_integral_cycles_to_max_out as f32;
-                                }
-                                ServoCommandFrame::SetDataRate { data_rate: dr } => {
-                                    data_rate = (*dr).clamp(0, 1000) as u32
-                                }
-                                ServoCommandFrame::SetGeneralConfig1 {
-                                    duty_cycle_limit: d,
-                                    reverse_motor: r,
-                                } => {
-                                    duty_cycle_limit = d.clamp(0.0, 1.0);
-                                    reverse_motor = *r;
-                                }
-                                ServoCommandFrame::SetGeneralConfig2 {
-                                    velocity_iir_filter_gain: g,
-                                    sensor_sample_rate_khz, //TODO: adjust sample rate
-                                } => {
-                                    velocity_iir_filter_gain = g.clamp(0.0, 1.0);
-                                    inverse_velocity_iir_filter_gain =
-                                        1.0 - velocity_iir_filter_gain;
-                                }
-                                ServoCommandFrame::SetBrushlessConfig {
-                                    zero_phase: z,
-                                    pole_pairs: p,
-                                } => {
-                                    encoder_zero = *z as u32;
-                                    pole_pairs = *p as u32;
-                                }
-                                ServoCommandFrame::SetPositionLowPassConfig {
-                                    gain
-                                } => {
-                                    position_low_pass_gain = gain.clamp(0.0, 1.0);
-                                }
-                            });
-                    }
-                    _ => {}
+                            }
+                        });
                 }
+                Standard(id) if id.as_raw() == master_address => {
+                    ServoCommandFrame::api_decode(&can_rx_buffer)
+                        .iter()
+                        .for_each(|scf| match scf {
+                            ServoCommandFrame::Disable
+                            | ServoCommandFrame::Brake
+                            | ServoCommandFrame::BrushedHoldPosition { .. }
+                            | ServoCommandFrame::BrushedForceDutyCycle { .. }
+                            | ServoCommandFrame::BrushlessForcePosition { .. }
+                            | ServoCommandFrame::BrushlessHoldPosition { .. } => {
+                                current_command = scf.clone();
+                            }
+                            ServoCommandFrame::SetPositionPGain { p } => position_p_gain = *p,
+                            ServoCommandFrame::SetPositionIGain {
+                                i,
+                                cycles_to_max_out,
+                            } => {
+                                position_i_gain = *i;
+                                max_position_integral = 8192_i64 * (*cycles_to_max_out as i64);
+                            }
+                            ServoCommandFrame::SetVelocityPGain { p } => velocity_p_gain = *p,
+                            ServoCommandFrame::SetVelocityIGain {
+                                i,
+                                cycles_to_max_out,
+                            } => {
+                                velocity_i_gain = *i;
+                                velocity_integral_cycles_to_max_out = *cycles_to_max_out;
+                                max_velocity_integral =
+                                    max_velocity * velocity_integral_cycles_to_max_out as f32;
+                            }
+                            ServoCommandFrame::SetMaxVelocity { v } => {
+                                max_velocity = v.clamp(0.0, f32::MAX);
+                                max_velocity_integral =
+                                    max_velocity * velocity_integral_cycles_to_max_out as f32;
+                            }
+                            ServoCommandFrame::SetDataRate { data_rate: dr } => {
+                                data_rate = (*dr).clamp(0, 1000) as u32
+                            }
+                            ServoCommandFrame::SetGeneralConfig1 {
+                                duty_cycle_limit: d,
+                                reverse_motor: r,
+                            } => {
+                                duty_cycle_limit = d.clamp(0.0, 1.0);
+                                reverse_motor = *r;
+                            }
+                            ServoCommandFrame::SetGeneralConfig2 {
+                                velocity_iir_filter_gain: g,
+                                sensor_sample_rate_khz: _, //TODO: adjust sample rate
+                            } => {
+                                velocity_iir_filter_gain = g.clamp(0.0, 1.0);
+                                inverse_velocity_iir_filter_gain = 1.0 - velocity_iir_filter_gain;
+                            }
+                            ServoCommandFrame::SetBrushlessConfig {
+                                zero_phase: z,
+                                pole_pairs: p,
+                            } => {
+                                encoder_zero = *z as u32;
+                                pole_pairs = *p as u32;
+                            }
+                            ServoCommandFrame::SetPositionLowPassConfig { gain } => {
+                                position_low_pass_gain = gain.clamp(0.0, 1.0);
+                            }
+                        });
+                }
+                _ => {}
             }
-            Err(_) => {}
         }
     }
 }
