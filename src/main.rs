@@ -368,7 +368,11 @@ fn main() -> ! {
                     + inverse_velocity_iir_filter_gain * delta as f32;
                 orientation_processed = false;
 
-                if counter > 10000 / data_rate {
+                // The sensor/control loop is nominally 10 kHz. Increment
+                // before comparing so a 1 kHz telemetry request sends exactly
+                // once per 10 completed control cycles (not every 11).
+                counter += 1;
+                if counter >= (10_000 / data_rate).max(1) {
                     counter = 0;
                     let data = current_orientation
                         .map(|position| ServoResponseFrame::State {
@@ -386,8 +390,6 @@ fn main() -> ! {
                         });
 
                     can.can_transmit(false, slave_address, &data);
-                } else {
-                    counter += 1;
                 }
             }
             Some(_) => {}
@@ -599,7 +601,7 @@ fn main() -> ! {
                                     max_velocity * velocity_integral_cycles_to_max_out as f32;
                             }
                             ServoCommandFrame::SetDataRate { data_rate: dr } => {
-                                data_rate = (*dr).clamp(0, 1000) as u32
+                                data_rate = (*dr).clamp(1, 1000) as u32
                             }
                             ServoCommandFrame::SetGeneralConfig1 {
                                 duty_cycle_limit: d,
