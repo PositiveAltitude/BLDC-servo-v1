@@ -323,7 +323,13 @@ fn main() -> ! {
                 let encoded = data.api_encode().unwrap();
                 let data = encoded.as_slice();
 
-                self.transmit(
+                // A rebooting host does not acknowledge frames. With automatic
+                // retransmission enabled, that can leave every TX mailbox occupied
+                // by this same response ID, causing `transmit` to return
+                // `WouldBlock`. Dropping this non-critical response lets the CAN
+                // peripheral retry its queued frames and keeps the control loop
+                // alive until the host is available again.
+                let _ = self.transmit(
                     TxFrameHeader {
                         len: data.len() as u8,
                         frame_format: FrameFormat::Standard,
@@ -332,8 +338,7 @@ fn main() -> ! {
                         marker: None,
                     },
                     data,
-                )
-                .unwrap();
+                );
             }
         }
     }
@@ -542,6 +547,20 @@ fn main() -> ! {
                                     master_address = *master;
                                     slave_address = *slave;
                                 }
+                            }
+                            GeneralCommandFrame::UnassignChannels => {
+                                // This command is accepted by every servo on CAN ID 0,
+                                // so a host can reset the whole channel assignment after
+                                // it restarts. Disable output before discarding the address
+                                // to ensure an orphaned servo cannot retain a drive command.
+                                master_address = 0;
+                                slave_address = 0;
+                                chip_id1_received = false;
+                                chip_id2_received = false;
+                                current_command = ServoCommandFrame::Disable;
+                                brushed_position_pid.reset();
+                                brushless_position_integral = 0;
+                                velocity_integral = 0.0;
                             }
                         });
                 }

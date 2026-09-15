@@ -20,6 +20,8 @@ pub enum GeneralCommandFrame {
     ChipID1 { chip_id1: [u8; 6] },
     ChipID2 { chip_id2: [u8; 6] },
     SetChannel { master: u16, slave: u16 },
+    // Keep new variants at the end so existing CAN discriminants stay stable.
+    UnassignChannels,
 }
 
 #[derive(Encode, Decode, PartialEq, Debug, Clone)]
@@ -271,6 +273,7 @@ mod tests {
             master: 0x123,
             slave: 0x456,
         });
+        assert_round_trip(GeneralCommandFrame::UnassignChannels);
         assert_round_trip(GeneralResponseFrame::ChipID1 {
             chip_id1: [1, 2, 3, 4, 5, 6],
         });
@@ -280,5 +283,26 @@ mod tests {
             velocity: -123,
             current: 456,
         });
+    }
+
+    #[test]
+    fn preserves_general_command_discriminants() {
+        assert_eq!(
+            GeneralCommandFrame::SetChannel {
+                master: 0x123,
+                slave: 0x456,
+            }
+            .api_encode()
+            .unwrap()
+            .as_slice(),
+            &[4, 0x01, 0x23, 0x04, 0x56]
+        );
+        assert_eq!(
+            GeneralCommandFrame::UnassignChannels
+                .api_encode()
+                .unwrap()
+                .as_slice(),
+            &[5]
+        );
     }
 }
